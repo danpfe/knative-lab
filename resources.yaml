@@ -1,0 +1,205 @@
+#####
+# Build our custom Cloud Function
+#####
+
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: calcfunc
+
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: calcfunc
+spec:
+  failedBuildsHistoryLimit: 1
+  successfulBuildsHistoryLimit: 1
+  output:
+    to:
+      kind: ImageStreamTag
+      name: calcfunc:latest
+  source:
+    git:
+      ref: alternative
+      uri: https://github.com/danpfe/knative-lab.git
+    type: Git
+  strategy:
+    dockerStrategy:
+      dockerfilePath: Containerfile
+      forcePull: true
+      noCache: true
+    type: Docker
+
+
+
+#####
+# KNative Kafka Broker Setup
+#####
+
+# NOTE: Uncomment the commented stuff here if you want to use Kafka as the storage backend for KNative Brokers.
+
+#---
+#apiVersion: v1
+#kind: ConfigMap
+#metadata:
+#  name: kafka-broker-config
+#data:
+#  bootstrap.servers: "kafka-cluster-kafka-bootstrap.pubsub.svc.cluster.local:9092"
+#  default.topic.partitions: "10"
+#  default.topic.replication.factor: "2"
+
+---
+apiVersion: eventing.knative.dev/v1
+kind: Broker
+metadata:
+  #  annotations:
+  #    eventing.knative.dev/broker.class: Kafka
+  name: kafka-broker
+spec:
+  #  config:
+  #    apiVersion: v1
+  #    kind: ConfigMap
+  #    name: kafka-broker-config
+  delivery:
+    deadLetterSink:
+      ref:
+        apiVersion: serving.knative.dev/v1
+        kind: Service
+        name: dlq-service
+
+
+
+#####
+# KNative Services that receive Cloud Events
+#####
+
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: dlq-service
+spec:
+  template:
+    spec:
+      containers:
+        - image: gcr.io/knative-releases/knative.dev/eventing/cmd/event_display
+
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: calc-service
+spec:
+  template:
+    spec:
+      containers:
+        - image: image-registry.openshift-image-registry.svc:5000/ipaas/calcfunc
+          ports:
+            - containerPort: 8080
+
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: result-service
+spec:
+  template:
+    spec:
+      containers:
+        - image: gcr.io/knative-releases/knative.dev/eventing/cmd/event_display
+
+
+
+#####
+# KNative Trigger Configurations for Events
+#####
+
+---
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: calc-trigger
+spec:
+  broker: kafka-broker
+  filter:
+    attributes:
+      type: calculate
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: calc-service
+
+---
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: result-trigger
+spec:
+  broker: kafka-broker
+  filter:
+    attributes:
+      type: calculate.output
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: result-service
+
+
+
+#####
+# Camel-K to KNative Events
+#####
+
+---
+apiVersion: camel.apache.org/v1
+kind: Integration
+metadata:
+  name: generate-numbers-to-calculate
+spec:
+  flows:
+    - from:
+        uri: 'timer:default'
+        parameters:
+          period: '120000'
+        steps:
+          - set-body:
+              simple: >-
+                {"numbers": [${random(0,1000)}, ${random(0,1000)}, ${random(0,1000)}]}
+          - set-header:
+              constant: application/json
+              name: Content-Type
+          - to:
+              parameters:
+                apiVersion: eventing.knative.dev/v1
+                kind: Broker
+                name: kafka-broker
+              uri: 'knative:event/calculate' # NOTE: The last part of the URI will give the type to the cloud event!
+
+---
+apiVersion: camel.apache.org/v1
+kind: Integration
+metadata:
+  name: generate-garbage-to-calculate
+spec:
+  flows:
+    - from:
+        uri: 'timer:default'
+        parameters:
+          period: '300000'
+        steps:
+          - set-body:
+              constant: >-
+                {"blah": "Invalid data"}
+          - set-header:
+              constant: application/json
+              name: Content-Type
+          - to:
+              parameters:
+                apiVersion: eventing.knative.dev/v1
+                kind: Broker
+                name: kafka-broker
+              uri: 'knative:event/calculate' # NOTE: The last part of the URI will give the type to the cloud event!
