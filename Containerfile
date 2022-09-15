@@ -1,4 +1,4 @@
-FROM docker.io/library/maven:3 AS builder
+FROM docker.io/library/maven:3-eclipse-temurin-17 AS builder
 
 WORKDIR /build
 
@@ -8,7 +8,7 @@ COPY settings.xml ./settings.xml
 
 RUN mvn -B -Duser.home=/tmp -s settings.xml package
 
-FROM docker.io/library/openjdk:17
+FROM docker.io/library/eclipse-temurin:17
 
 COPY --from=builder /build/target/knative-runner.jar /deployments/
 

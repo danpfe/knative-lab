@@ -22,7 +22,7 @@ spec:
       name: calcfunc:latest
   source:
     git:
-      ref: master
+      ref: alternative
       uri: https://github.com/danpfe/knative-lab.git
     type: Git
   strategy:
@@ -44,7 +44,7 @@ kind: ConfigMap
 metadata:
   name: kafka-broker-config
 data:
-  bootstrap.servers: "kafka-bootstrap.pubsub.svc:9092"
+  bootstrap.servers: "kafka-cluster-kafka-bootstrap.pubsub.svc.cluster.local:9092"
   default.topic.partitions: "10"
   default.topic.replication.factor: "2"
 
@@ -93,7 +93,7 @@ spec:
   template:
     spec:
       containers:
-        - image: calcfunc:latest
+        - image: image-registry.openshift-image-registry.svc:5000/ck/calcfunc
           ports:
             - containerPort: 8080
 
@@ -147,43 +147,3 @@ spec:
       name: result-service
 
 
-
-#####
-# Source of fake events
-#####
-
----
-apiVersion: sources.knative.dev/v1
-kind: PingSource
-metadata:
-  name: sum-request-source
-spec:
-  contentType: application/json
-  data: '{"numbers": [1,2,3,4]}'
-  schedule: '*/2 * * * *'
-  ceOverrides:
-    extensions:
-      type: calculate
-  sink:
-    ref:
-      apiVersion: eventing.knative.dev/v1
-      kind: Broker
-      name: kafka-broker
-
----
-apiVersion: sources.knative.dev/v1
-kind: PingSource
-metadata:
-  name: invalid-request-source
-spec:
-  contentType: application/json
-  data: '{"blah": "Invalid data"}'
-  schedule: '*/5 * * * *'
-  ceOverrides:
-    extensions:
-      type: calculate
-  sink:
-    ref:
-      apiVersion: eventing.knative.dev/v1
-      kind: Broker
-      name: kafka-broker
