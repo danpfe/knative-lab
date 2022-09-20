@@ -38,28 +38,28 @@ spec:
 # KNative Kafka Broker Setup
 #####
 
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: kafka-broker-config
-data:
-  bootstrap.servers: "kafka-cluster-kafka-bootstrap.pubsub.svc.cluster.local:9092"
-  default.topic.partitions: "10"
-  default.topic.replication.factor: "2"
+#---
+#apiVersion: v1
+#kind: ConfigMap
+#metadata:
+#  name: kafka-broker-config
+#data:
+#  bootstrap.servers: "kafka-cluster-kafka-bootstrap.pubsub.svc.cluster.local:9092"
+#  default.topic.partitions: "10"
+#  default.topic.replication.factor: "2"
 
 ---
 apiVersion: eventing.knative.dev/v1
 kind: Broker
 metadata:
-  annotations:
-    eventing.knative.dev/broker.class: Kafka
+  #  annotations:
+  #    eventing.knative.dev/broker.class: Kafka
   name: kafka-broker
 spec:
-  config:
-    apiVersion: v1
-    kind: ConfigMap
-    name: kafka-broker-config
+  #  config:
+  #    apiVersion: v1
+  #    kind: ConfigMap
+  #    name: kafka-broker-config
   delivery:
     deadLetterSink:
       ref:
@@ -93,7 +93,7 @@ spec:
   template:
     spec:
       containers:
-        - image: image-registry.openshift-image-registry.svc:5000/ck/calcfunc
+        - image: image-registry.openshift-image-registry.svc:5000/ipaas/calcfunc
           ports:
             - containerPort: 8080
 
@@ -147,3 +147,57 @@ spec:
       name: result-service
 
 
+
+#####
+# Camel-K to KNative Events
+#####
+
+---
+apiVersion: camel.apache.org/v1
+kind: Integration
+metadata:
+  name: generate-numbers-to-calculate
+spec:
+  flows:
+    - from:
+        uri: 'timer:default'
+        parameters:
+          period: '25000'
+        steps:
+          - set-body:
+              simple: >-
+                {"numbers": [${random(0,1000)}, ${random(0,1000)}, ${random(0,1000)}]}
+          - set-header:
+              constant: application/json
+              name: Content-Type
+          - to:
+              parameters:
+                apiVersion: eventing.knative.dev/v1
+                kind: Broker
+                name: kafka-broker
+              uri: 'knative:event/calculate' # NOTE: The last part of the URI will give the type to the cloud event!
+
+---
+apiVersion: camel.apache.org/v1
+kind: Integration
+metadata:
+  name: generate-garbage-to-calculate
+spec:
+  flows:
+    - from:
+        uri: 'timer:default'
+        parameters:
+          period: '50000'
+        steps:
+          - set-body:
+              constant: >-
+                {"blah": "Invalid data"}
+          - set-header:
+              constant: application/json
+              name: Content-Type
+          - to:
+              parameters:
+                apiVersion: eventing.knative.dev/v1
+                kind: Broker
+                name: kafka-broker
+              uri: 'knative:event/calculate' # NOTE: The last part of the URI will give the type to the cloud event!
